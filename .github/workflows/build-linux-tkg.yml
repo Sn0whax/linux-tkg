@@ -1,79 +1,99 @@
-name: Build linux-tkg
+name: Build my linux-tkg kernel
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build:
-    name: Build Arch packages
+  build-kernel:
+    name: Build Alder Lake linux-tkg
     runs-on: ubuntu-latest
     timeout-minutes: 355
 
+    container:
+      image: archlinux:latest
+
+    env:
+      # Path to your override file inside the checked-out repository
+      _EXT_CONFIG_PATH: ${{ github.workspace }}/ci/linux-tkg.cfg
+
+      # Put completed packages somewhere predictable
+      PKGDEST: /tmp/linux-tkg-packages
+
+      # CI-specific options
+      _git_mirror: gregkh
+      _noccache: "true"
+      _STRIP: "true"
+      _kernel_work_folder: /tmp
+      _kernel_source_folder: /tmp
+      _nofallback: "true"
+
     steps:
-      - name: Check out repository
+      - name: Install Git
+        run: pacman -Syu --noconfirm git
+
+      - name: Check out linux-tkg
         uses: actions/checkout@v4
 
-      - name: Free runner disk space
-        shell: bash
+      - name: Prepare Arch build environment
         run: |
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache
-          df -h
+          pacman -Syu --noconfirm
+          pacman -S --needed --noconfirm base-devel sudo
 
-      - name: Build in Arch Linux container
-        shell: bash
+          useradd --create-home --shell /bin/bash builder
+
+          echo "builder ALL=(ALL) NOPASSWD: ALL" \
+            > /etc/sudoers.d/builder
+
+          chmod 440 /etc/sudoers.d/builder
+
+          mkdir -p "$PKGDEST"
+
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          chown -R builder:builder "$PKGDEST"
+          chown -R builder:builder /tmp
+
+      - name: Display effective CI configuration
         run: |
-          docker run --rm \
-            --privileged \
-            --volume "$GITHUB_WORKSPACE:/build" \
-            --workdir /build \
-            archlinux:latest \
-            bash -lc '
-              set -euo pipefail
+          echo "External configuration: $_EXT_CONFIG_PATH"
+          echo "Package destination: $PKGDEST"
+          test -f "$_EXT_CONFIG_PATH"
+          cat "$_EXT_CONFIG_PATH"
 
-              pacman -Syu --noconfirm
-              pacman -S --needed --noconfirm \
-                base-devel \
-                git \
-                sudo
-
-              useradd --create-home --shell /bin/bash builder
-              echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
-              chmod 440 /etc/sudoers.d/builder
-
-              chown -R builder:builder /build
-
-              sudo --user builder \
-                env _EXT_CONFIG_PATH=/build/ci/linux-tkg.cfg \
-                bash -lc "
-                  cd /build
-                  makepkg --syncdeps --noconfirm --cleanbuild
-                "
-            '
-
-      - name: Collect packages
-        shell: bash
+      - name: Compile kernel
         run: |
-          mkdir -p packages
+          su --preserve-environment builder -c '
+            cd "$GITHUB_WORKSPACE"
+            yes "" | makepkg --syncdeps --noconfirm --cleanbuild
+          '
 
-          find . -type f \
-            \( -name "*.pkg.tar.zst" -o -name "*.pkg.tar.xz" \) \
-            -exec cp -v {} packages/ \;
+      - name: Save generated kernel configuration
+        if: always()
+        run: |
+          if test -f kernelconfig.new; then
+            cp kernelconfig.new kernelconfig.arch.alderlake.txt
+          fi
 
-          echo "Produced packages:"
-          ls -lah packages
+      - name: List generated packages
+        run: |
+          echo "Generated files:"
+          find "$PKGDEST" -maxdepth 1 -type f -print
 
-          test -n "$(find packages -type f -name '*.pkg.tar.*' -print -quit)"
+          test -n "$(
+            find "$PKGDEST" \
+              -maxdepth 1 \
+              -type f \
+              -name '*.pkg.tar.*' \
+              -print \
+              -quit
+          )"
 
-      - name: Upload workflow artifact
+      - name: Upload kernel packages
         uses: actions/upload-artifact@v4
         with:
           name: linux-tkg-alderlake
-          path: packages/*
+          path: |
+            /tmp/linux-tkg-packages/*.pkg.tar.zst
+            /tmp/linux-tkg-packages/*.pkg.tar.xz
+            kernelconfig.arch.alderlake.txt
           if-no-files-found: error
           retention-days: 14
