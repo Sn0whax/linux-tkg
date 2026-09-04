@@ -1,168 +1,470 @@
 # Linux-tkg
 
-This repository provides scripts to automatically download, patch and compile any version ≥ 5.4 of the Linux Kernel.
+This repository provides scripts to automatically download, patch, and compile any version ≥ 5.4 of the Linux kernel.
 
-`linux-tkg` also ships with a selection of patches that can improve the desktop/gaming experience: most can be toggled by editing the [customization.cfg](./customization.cfg) file, or by simply following the interactive install script.
+`linux-tkg` also ships with a selection of patches that can improve the desktop and gaming experience. Most options can be configured by editing the ./customization.cfg file or by following the interactive installation script.
 
-- [Linux-tkg](#linux-tkg)
-  - [Important information](#important-information)
-  - [Customization options](#customization-options)
-    - [Overview](#overview)
-    - [CPU task schedulers](#cpu-task-schedulers)
-      - [Runtime scheduler swap: sched-ext](#runtime-scheduler-swap-sched-ext)
-      - [Build-time scheduler swap](#build-time-scheduler-swap)
-    - [Bring your own patches](#bring-your-own-patches)
-    - [Kernel config options](#kernel-config-options)
-  - [Install procedure](#install-procedure)
-    - [Arch \& derivatives](#arch--derivatives)
-    - [DEB and RPM based distributions](#deb-and-rpm-based-distributions)
-    - [Generic install](#generic-install)
-    - [Gentoo](#gentoo)
+> [!NOTE]
+> This repository is a customized fork of [Frogging-Family/linux-tkg](https://github.com/Frogging-Family/linux-tkg).
+>
+> It retains the standard linux-tkg build and configuration system while including repository-specific maintenance and automated synchronization of selected external kernel patches.
+>
+> The installation instructions below clone the `Sn0whax/linux-tkg` repository.
+
+- #linux-tkg
+  - #important-information
+  - #about-this-fork
+  - #customization-options
+    - #overview
+    - #cpu-task-schedulers
+      - #runtime-scheduler-swap-sched-ext
+      - #build-time-scheduler-swap
+    - #bring-your-own-patches
+    - #kernel-config-options
+  - #install-procedure
+    - #arch-and-derivatives
+    - #deb-and-rpm-based-distributions
+    - #generic-install
+    - #gentoo
+  - [Updating an existing installation
+  - #upstream-project-and-credits
 
 ## Important information
 
-- **Non-pacman distros support can be considered experimental. You're invited to report issues you might encounter with it.**
-- **If your distro isn't using systemd, please set _configfile="running-kernel" in customization.cfg or you might end up with a non-bootable kernel**
-- Building recent linux kernels with GCC will require ~20-25GB of disk space. Using llvm/clang, LTO, ccache and/or enabling more drivers in the defconfig will push that requirement higher, so make sure you have enough free space on the volume you're using to build.
-- Nvidia drivers might need to be patched to cleanly build/work on latest kernels.
-  [Frogging-Family nvidia-all](https://github.com/Frogging-Family/nvidia-all) can help you with that :frog:
+- **Support for non-pacman distributions can be considered experimental. You are invited to report any issues you encounter.**
+- **If your distribution does not use systemd, set `_configfile="running-kernel"` in `customization.cfg`, or you might end up with a non-bootable kernel.**
+- Building recent Linux kernels with GCC requires approximately 20 to 25 GB of disk space. Using LLVM/Clang, LTO, ccache, or enabling additional drivers in the defconfig can increase that requirement.
+- NVIDIA drivers may need to be patched to build or work correctly with newer kernels. [Frogging-Family/nvidia-all](https://github.com/Frogging-Family/nvidia-all) may help withs and external patches are not available for every kernel version. The build script displays options based on the selected kernel version.
+- Custom kernels can fail to boot because of incompatible patches, missing drivers, unsuitable configuration options, or unsupported external modules. Keep a known-working kernel installed as a fallback.
+
+## About this fork
+
+This repository is based on [Frogging-Family/linux-tkg](https://github.com/Frogging-Family/linux-tkg) and retains its standard build, patching, configuration, and packaging workflow.
+
+This fork additionally maintains selected external patch sets for supported kernel versions. GitHub Actions periodically check the configured upstream patch sources and update the corresponding patch files when newer revisions become available.
+
+Automatically synchronized patch sources include:
+
+- BORE scheduler patches from https://github.com/firelzrd/bore-scheduler
+- Linux-hardened patches from https://github.com/anthraxx/linux-hardened
+
+Patch availability depends on whether a compatible patch exists for the selected kernel version.
+
+Unless otherwise noted, the configuration variables and build procedures in this repository remain compatible with upstream linux-tkg.
 
 ## Customization options
 
-Most customizations can be toggled by:
+Most customizations can be configured by:
 
-- Editing the variables in [customization.cfg](./customization.cfg), those values can be overridden by (in increasing priority)
-  - An external config file: given by the `_EXT_CONFIG_PATH` variable: in the above file or in the environment, defaults to `~/.config/frogminer/linux-tkg.cfg`.
-  - Setting the variables in the shell environment.
-- Following the interactive install script (it does _not_ prompt for all of them).
+- Editing variables in ./customization.cfg
+- Providing an external configuration file through the `_EXT_CONFIG_PATH` variable
+- Setting configuration variables in the shell environment
+- Following the interactive installation script, although it does not prompt for every available option
+
+Configuration values use the following order of priority, from lowest to highest:
+
+1. Values in ./customization.cfg
+2. Values in the external configuration file
+3. Values set in the shell environment
+
+The external configuration file defaults to:
+
+```text
+~/.config/frogminer/linux-tkg.cfg
+```
+
+Using the external configuration file lets you keep personal build settings outside the Git repository and helps prevent repository updates from overwriting those settings.
 
 ### Overview
 
-Here's an overview a few toggles from [customization.cfg](./customization.cfg)
+Here is an overview of several options available in ./customization.cfg:
 
-- `_timer_freq` - Timer frequency depend on sheduler
-- `_cpusched` - Chose a different [CPU scheduler](#cpu-task-schedulers)
-- `_processor_opt` - Tune the compiled code to to a specified CPU eg. `znver4`.
-- `_compileroptlevel` - Compile with GCC or Clang with optional `O2`/`O3`
-- `_lto_mode`: Clang only, enable `LTO` compiler optimizations.
-- Build a kernel with less modules: reduces compile time, needed TMPFS/RAM space, and produces a smaller kernel
-  - `_kernel_on_diet`: uses a ready-made stripped down list of modules to build
-  - Advanced users: using your own module list **NOT recommended**
-    - Using `_modprobeddb` and `_modprobeddb_db_path` options
-    - [Modprobed-db](https://github.com/graysky2/modprobed-db) can help build the list: make sure to read [thoroughly about it first](https://wiki.archlinux.org/index.php/Modprobed-db) as a list too short list can produce unbootable kernels or have runtime issues because of missing modules.
-- `NTsync` & `Fsync` support, including older kernel versions that don't ship them
-  - A patched wine may be needed, see [wine-tkg](https://github.com/Frogging-Family/wine-tkg-git)
+- `_version`
+  - Select the kernel version or branch to build.
+
+- `_timer_freq`
+  - Select the kernel timer frequency.
+  - Available or recommended values may depend on the selected scheduler.
+
+- `_cpusched`
+  - Select a different #cpu-task-schedulers.
+
+- `_processor_opt`
+  - Tune the compiled code for a specified processor family or architecture.
+  - For example:
+
+    ```shell
+    _processor_opt="znver4"
+    ```
+
+- `_compileroptlevel`
+  - Compile with GCC or Clang using supported optimization levels such as `O2` or `O3`.
+
+- `_lto_mode`
+  - Enable a supported LLVM/Clang Link Time Optimization mode.
+
+- `_kernel_on_diet`
+  - Use a prepared reduced list of kernel modules.
+  - This can reduce compilation time, temporary storage requirements, and final package size.
+
+- `_modprobeddb`
+  - Build using a module list generated from modules observed on the current system.
+
+- `_modprobeddb_db_path`
+  - Specify the path to the modprobed-db database.
+
+- `_user_patches`
+  - Enable detection and application of user-provided patches.
+
+- `_configfile`
+  - Select the kernel configuration used as the baseline for the build.
+
+Review ./customization.cfg for the complete and current list of available options.
+
+#### Reduced module builds
+
+Building a kernel with fewer modules can:
+
+- Reduce compilation time
+- Reduce temporary storage and memory requirements
+- Produce smaller kernel packages
+- Reduce the number of unnecessary modules installed on the system
+
+The `_kernel_on_diet` option uses a prepared, reduced module configuration.
+
+Advanced users can instead use `_modprobeddb` and `_modprobeddb_db_path` with https://github.com/graysky2/modprobed-db.
+
+Read the [Arch Linux modprobed-db documentation](https://wiki.archlinux.org/title/Modprobed-db) before relying on a generated module list. A list that is too restrictive can omit storage, filesystem, networking, input, graphics, or other drivers required during boot or normal operation.
+
+#### NTsync and Fsync
+
+Linux-tkg includes options related to NTsync and Fsync support, including support for older kernel versions that do not provide the desired functionality by default.
+
+A compatible or patched Wine build may also be required. See https://github.com/Frogging-Family/wine-tkg-git for the related Wine build project.
 
 ### CPU task schedulers
 
-A CPU task scheduler is the algorithm that decides which task (app, game, background service... etc) one runs when, for how long, on which core, and make it take turns with which other tasks. Those decisions can have an impact on throughput (how many things get done globally per unit of time), and latency (how long tasks have to wait before running again). Gaming is generally more sensitive to latency and some schedulers can be more more adapted for that.
+A CPU task scheduler is the algorithm that decides:
+
+- Which task runs
+- When each task runs
+- How long each task runs
+- Which CPU core runs each task
+- How processor time is shared among applications, games, background services, and system processes
+
+These decisions can affect throughput and latency.
+
+Throughput describes how much work is completed over a period of time. Latency describes how long a task waits before it can run again.
+
+Gaming and interactive desktop workloads are often sensitive to latency and frame-time consistency. Compilation, rendering, and server workloads may place more importance on sustained throughput.
+
+Linux-tkg supports two general approaches to scheduler customization:
+
+1. Runtime scheduler switching through sched-ext
+2. Build-time selection of an alternative scheduler patch
 
 #### Runtime scheduler swap: sched-ext
 
-Starting kernel ≥ 6.12, it's possible to switch CPU schedulers at runtime while keeping the kernel's built-in default scheduler one as fallback/backup,
-using [sched-ext](https://github.com/sched-ext/scx). `sched-ext` offers various schedulers, `LAVD` is geared towards gaming workloads and used by Steam's
-Deck handheld console.
+Starting with kernel 6.12, it is possible to switch supported CPU schedulers at runtime while keeping the kernel's built-in scheduler as a fallback by using https://github.com/sched-ext/scx.
+
+Sched-ext provides several scheduler implementations designed for different workloads.
+
+LAVD is a sched-ext scheduler intended for gaming, interactive, and other latency-sensitive workloads.
 
 Notes:
 
-- Arch users get scx schedulers from the `scx-scheds` package or on the [AUR](https://aur.archlinux.org/packages/scx-scheds-git) thanks to @sirlucjan.
-- For persistence of the chosen runtime scheduler upon reboots:
-  - set scheduler in `/etc/default/scx`
-  - enable the `scx` service: `systemctl enable scx`.
+- Arch users can install sched-ext schedulers from the `scx-scheds` package or from the https://aur.archlinux.org/packages/scx-scheds-git.
+- On supported systemd installations, persistent scheduler configuration is commonly stored in:
+
+  ```text
+  /etc/default/scx
+  ```
+
+- The sched-ext service can be enabled with:
+
+  ```shell
+  sudo systemctl enable --now scx
+  ```
+
+Runtime scheduler switching makes it possible to test compatible schedulers without rebuilding the entire kernel for each scheduler change.
 
 #### Build-time scheduler swap
 
-[EEVDF](https://lwn.net/Articles/925371/) is the only CPU scheduler available in the upstream "vanilla" kernel sources ≥ 6.6, and [CFS](https://en.wikipedia.org/wiki/Completely_Fair_Scheduler) for earlier kernel versions.
+EEVDF is the scheduler used by upstream Linux kernels beginning with kernel 6.6. Earlier kernel versions use CFS.
 
-Alternative build-time default schedulers are optionally available in linux-tkg:
+Additional information is available from:
 
-- BORE (Burst-Oriented Response Enhancer) by Masahito Suzuki - CFS/EEVDF based : [code repository](https://github.com/firelzrd/bore-scheduler)
-- Project C / PDS & BMQ by Alfred Chen: [blog](http://cchalpha.blogspot.com/ ), [code repository](https://gitlab.com/alfredchen/projectc)
-- MuQSS by Con Kolivas : [blog](http://ck-hack.blogspot.com/), [code repository](https://github.com/ckolivas/linux)
-- Undead PDS : TkG's port of the pre-Project C "PDS-mq" scheduler by Alfred Chen. While PDS-mq got dropped with kernel 5.1 in favor of its BMQ evolution/rework, it wasn't on par with PDS-mq in gaming. "U" PDS still performed better in some cases than other schedulers, so it's been kept undead for a while.
+- https://lwn.net/Articles/925371/
+- https://en.wikipedia.org/wiki/Completely_Fair_Scheduler
 
-These alternative schedulers may offer a better performance/latency ratio in some scenarios. The availability of each scheduler depends on the chosen Kernel version: the script will display what's available on a per-version basis.
+Alternative build-time schedulers are optionally available in linux-tkg.
+
+The availability of each scheduler depends on the selected kernel version.
+
+##### BORE
+
+BORE stands for Burst-Oriented Response Enhancer.
+
+BORE modifies CFS or EEVDF behaviour with the goal of improving responsiveness for bursty and interactive workloads.
+
+Source repository:
+
+- https://github.com/firelzrd/bore-scheduler
+
+##### Project C, PDS, and BMQ
+
+Project C includes scheduler work by Alfred Chen, including the PDS and BMQ scheduler implementations.
+
+Related resources:
+
+- [Project C development blog](http://cchalpha.blogspot.com/)
+- https://gitlab.com/alfredchen/projectc
+
+##### MuQSS
+
+MuQSS is a scheduler developed by Con Kolivas.
+
+Related resources:
+
+- http://ck-hack.blogspot.com/
+- https://github.com/ckolivas/linux
+
+##### Undead PDS
+
+Undead PDS is linux-tkg's maintained port of the earlier PDS-mq scheduler by Alfred Chen.
+
+PDS-mq was dropped with kernel 5.1 in favour of its BMQ evolution and rework. Because PDS-mq continued to perform well for some gaming workloads, linux-tkg retained it as an optional scheduler for compatible kernel versions.
+
+Alternative schedulers may offer a different balance between:
+
+- Latency
+- Responsiveness
+- Fairness
+- Frame-time consistency
+- Background-task behaviour
+- Overall throughput
+
+No scheduler is guaranteed to perform best for every workload or hardware configuration.
+
+The build script displays the schedulers that are compatible with the selected kernel version.
 
 ### Bring your own patches
 
-To apply your own patches with `linux-tkg`:
+To apply your own patches with linux-tkg:
 
-- Create a `linuxXY-tkg-userpatches` folder at the root of the clone
-  - where `X` and `Y` specify the kernel version the patches applies to.
-    - Examples: `linux65-tkg-userpatches`, `linux618-tkg-userpatches`
-- Set `_user_patches=true` in your customization file.
-- Drop your patches within that folder the `.mypatch` extension.
+1. Create a version-specific user-patch directory at the root of the repository.
+2. Enable user patches in your customization file.
+3. Place each patch in the matching directory with the `.mypatch` extension.
 
-The install script will then find them, and ask if you want to apply each patch.
+The user-patch directory must use the following format:
+
+```text
+linuxXY-tkg-userpatches
+```
+
+`X` and `Y` represent the kernel's major and minor version numbers.
+
+Examples:
+
+```text
+linux65-tkg-userpatches
+linux66-tkg-userpatches
+linux612-tkg-userpatches
+linux618-tkg-userpatches
+```
+
+Enable user patches in your configuration:
+
+```shell
+_user_patches=true
+```
+
+Place patches inside the corresponding directory using the `.mypatch` extension.
+
+Example:
+
+```text
+linux612-tkg-userpatches/0001-my-custom-change.mypatch
+```
+
+The interactive build process detects compatible `.mypatch` files and asks whether each patch should be applied.
+
+User patches must be compatible with:
+
+- The selected kernel version
+- The selected scheduler
+- Other enabled patch sets
+- Any repository-specific patches already applied during the build
 
 ### Kernel config options
 
-`linux-tkg` starts by default on [Arch's full defconfig](https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/blob/main/config.x86_64),
-tweaks some CONFIG options in it (either always or based on input from `customization.cfg`), then proceeds to build the kernel.
+Linux-tkg starts from the Arch Linux kernel configuration by default and modifies selected options according to the build configuration.
 
-To modify kernel config options:
-- The baseline kernel defconfic can be overriden with the `_configfile` [customization](#customization-options)
-  - Note: The interactive script will override some entries, see next point to revert them if needed.
-- Config options can be modified right before the kernel starts building
-  - GUI/TUI
-    - The interactive script prompts the user for `make xconfig/menuconfig`, then prompts to save the eventual changes into "frag" files
-      - Note: make sure to append the `.myfrag` extension to the name so the script can automatically reuse them.
-  - "frag" files: defconfig "fragments" to override the defconfig file, right before the compilation starts
-    - These files must reside at the root of the `linux-tkg` clone and have a `.myfrag` extension.
-    - The intractive script will prompt to apply them, one frag at a time.
+The current Arch Linux configuration can be viewed in the [Arch Linux kernel packaging repository](https://gitlab.archlinux.org/archlinux/packaging/packages/linux/-/blob/main/config.x86_64).
+
+#### Selecting a configuration baseline
+
+The `_configfile` customization option controls which kernel configuration is used as the baseline.
+
+For example, distributions that do not use systemd should normally use:
+
+```shell
+_configfile="running-kernel"
+```
+
+A custom configuration can also be selected where supported by the build scripts.
+
+The interactive script may override some configuration entries according to the selected linux-tkg options.
+
+#### Interactive configuration
+
+Before compilation, the interactive installer can offer access to kernel configuration interfaces such as:
+
+```shell
+make menuconfig
+```
+
+or:
+
+```shell
+make xconfig
+```
+
+Changes made through these interfaces can be saved as configuration fragments for reuse.
+
+#### Configuration fragments
+
+Configuration fragments override selected values from the baseline configuration immediately before compilation.
+
+Store fragment files at the root of the linux-tkg repository and give them the `.myfrag` extension.
+
+Example:
+
+```text
+gaming-options.myfrag
+```
+
+The interactive installer detects these files and asks whether each fragment should be applied.
+
+A fragment should contain only the kernel configuration entries that need to be added or overridden.
 
 ## Install procedure
 
-For all the supported linux distributions, `linux-tkg` has to be cloned with `git`. It is recommended to clone it only once and update it with `git pull`.
-as it keeps a relatively big clone of the kernel's sources within (in the `linux-src-git` folder, created during the first build after a fresh clone).
+For all supported Linux distributions, linux-tkg must be cloned with Git.
 
-### Arch & derivatives
+It is recommended to clone the repository only once and update it with `git pull`. Linux-tkg retains a relatively large clone of the kernel sources in the `linux-src-git` directory, which is created during the first build from a fresh clone.
+
+Reusing an existing clone can avoid downloading and preparing all source data again.
+
+### Arch and derivatives
+
+Install the required build tools:
 
 ```shell
-git clone https://github.com/Frogging-Family/linux-tkg.git
+sudo pacman -S --needed base-devel git
+```
+
+Clone this repository:
+
+```shell
+git clone https://github.com/Sn0whax/linux-tkg.git
 cd linux-tkg
-# Optional: edit the "customization.cfg" file
+```
+
+Optionally edit the configuration:
+
+```shell
+nano customization.cfg
+```
+
+Build and install the kernel packages:
+
+```shell
 makepkg -si
 ```
 
-The options selected at build-time are installed to `/usr/share/doc/$pkgbase/customization.cfg`, where `$pkgbase` is the package name.
+The options selected at build time are installed to:
 
-**Note:** the `base-devel` package group is expected to be installed, see [here](https://wiki.archlinux.org/title/Makepkg) for more information.
+```text
+/usr/share/doc/$pkgbase/customization.cfg
+```
+
+The exact `$pkgbase` value depends on the package name generated by the selected configuration.
+
+The `base-devel` package group is expected to be installed. See the [Arch Linux makepkg documentation](https://wiki.archlinux.org/title/Makepkg) for additional information.
 
 ### DEB and RPM based distributions
 
-The interactive `install.sh` script will create, depending on the selected distro, `.deb` or `.rpm` packages, move them in the the subfolder `DEBS` or `RPMS` then prompts to install them with the distro's package manager.
+The interactive `install.sh` script creates packages appropriate for the selected distribution.
 
-- `.deb` packages: for Debian, Ubuntu...
-- `.rpm` packages: Fedora, RHEL, SUSE...
+Supported package formats include:
+
+- `.deb` packages for Debian, Ubuntu, and related distributions
+- `.rpm` packages for Fedora, RHEL, SUSE, and related distributions
+
+Clone this repository:
 
 ```shell
-git clone https://github.com/Frogging-Family/linux-tkg.git
+git clone https://github.com/Sn0whax/linux-tkg.git
 cd linux-tkg
-# Optional: edit the "customization.cfg" file
+```
+
+Optionally edit the configuration:
+
+```shell
+nano customization.cfg
+```
+
+Run the interactive installer:
+
+```shell
 ./install.sh install
 ```
 
-Uninstalling custom kernels installed through the script has to be done
-manually. `install.sh` can can help out with some useful information:
+Depending on the selected distribution, generated packages are placed in one of the following directories:
+
+```text
+DEBS
+RPMS
+```
+
+The script then offers to install the generated packages using the distribution's package manager.
+
+Support for non-pacman distributions is experimental. Required build dependencies must be installed before starting the build.
+
+Uninstalling custom kernels installed through the script must be performed manually. The script can provide relevant uninstall information:
 
 ```shell
-cd path/to/linux-tkg
+cd /path/to/linux-tkg
 ./install.sh uninstall-help
 ```
 
 ### Generic install
 
-The interactive `install.sh` script can be used to perform a "Generic" install by choosing `Generic` when prompted or in the `_distro` [customization option](#customization-options).
+The interactive `install.sh` script can perform a generic installation.
+
+Select `Generic` when prompted for the distribution or select the corresponding generic option in your customization configuration.
+
+Clone this repository:
 
 ```shell
-git clone https://github.com/Frogging-Family/linux-tkg.git
+git clone https://github.com/Sn0whax/linux-tkg.git
 cd linux-tkg
-# Optional: edit the "customization.cfg" file
+```
+
+Optionally edit the configuration:
+
+```shell
+nano customization.cfg
+```
+
+Run the installer:
+
+```shell
 ./install.sh install
 ```
 
-The script will compile the kernel then prompt before doing the following:
+The script compiles the kernel and asks before performing operations equivalent to:
 
 ```shell
 sudo cp -R . /usr/src/linux-tkg-${kernel_flavor}
@@ -171,35 +473,135 @@ sudo make modules_install
 sudo make install
 ```
 
-**Notes:**
+Important notes:
 
-- All the needed dependencies to patch, configure, compile or install the kernel are expected to be installed by the user beforehand.
-- If you only want the script to patch the sources in `linux-src-git`, you can use `./install.sh config`
-- `${kernel_flavor}` is a default naming scheme but can be customized with the `_kernel_localversion` [customization option](#customization-options).
-- `_libunwind_replace` [customization option](#customization-options) can replace `libunwind` with `llvm-libunwind`.
-- The script uses Arch's `.config` file as a base. A custom one can be provided in the `_configfile` [customization option](#customization-options).
-- The installed files will not be tracked by your package manager and uninstalling requires manual intervention.
-  `./install.sh uninstall-help` can help with useful information if your install procedure follows the `Generic` approach.
-- Installing the kernel with `make install` calls `/sbin/installkernel` (see [here](https://docs.kernel.org/kbuild/kbuild.html#installkernel))
-  to put the kernel at the right place and trigger an initramfs (and UKI) generation, check your distro's documentation on how to configure it to your needs
-  - [arch](https://wiki.archlinux.org/title/Kernel-install)
-  - [gentoo](https://wiki.gentoo.org/wiki/Installkernel)
+- All dependencies needed to patch, configure, compile, and install the kernel must be installed beforehand.
+- Files installed through the generic method may not be tracked by the distribution's package manager.
+- Uninstalling a generic installation may require manual intervention.
+- Run `./install.sh uninstall-help` for information based on the expected generic installation layout.
+- The script uses the Arch Linux kernel configuration as its baseline unless another configuration is selected through `_configfile`.
+- The `_libunwind_replace` option can replace `libunwind` with `llvm-libunwind` where supported.
+- `${kernel_flavor}` is the default naming scheme, but it can be changed through the `_kernel_localversion` customization option.
+- Running `make install` calls `/sbin/installkernel` where available.
+- Initramfs, Unified Kernel Image, and bootloader handling depend on the host distribution.
+
+If you only want the script to patch and configure the sources in `linux-src-git`, run:
+
+```shell
+./install.sh config
+```
+
+For additional information about `installkernel`, see the [Linux kernel installkernel documentation](https://docs.kernel.org/kbuild/kbuild.html#installkernel).
+
+Distribution-specific references:
+
+- [Arch Linux kernel installation documentation](https://wiki.archlinux.org/title/Kernel-install)
+- [Gentoo installkernel documentation](https://wiki.gentoo.org/wiki/Installkernel)
 
 ### Gentoo
 
-The interactive `install.sh` script supports Gentoo by following the same procedure as `Generic`, with minor additions
+The interactive installer supports Gentoo by following the generic installation procedure with additional Gentoo-specific operations.
 
-1. Applies few Gentoo patches
-   - `https://dev.gentoo.org/~mpagano/genpatches/trunk/$kver/4567_distro-Gentoo-Kconfig.patch`
-   - `https://dev.gentoo.org/~mpagano/genpatches/trunk/$kver/3000_Support-printing-firmware-info.patch`
-2. If using an init other than `systemd`, set `_gentoo_init='script'` in `customization.cfg`
-   - Note: for a minimal defconfig, it is then advised to provide your own defconfig through `_configfile=` in `customization.cfg`: the default Arch defconfig is otherwise used with `systemd` related config options enabled regardless.
-3. Symlinks the newly installed `/usr/src/linux-tkg-${kernel_flavor}` src folder to `/usr/src/linux`
-4. Offers to do a `emerge @module-rebuild` for convenience
+Clone this repository:
 
 ```shell
-git clone https://github.com/Frogging-Family/linux-tkg.git
+git clone https://github.com/Sn0whax/linux-tkg.git
 cd linux-tkg
-# Optional: edit the "customization.cfg" file
+```
+
+Optionally edit the configuration:
+
+```shell
+nano customization.cfg
+```
+
+Run the interactive installer:
+
+```shell
 ./install.sh install
 ```
+
+The Gentoo installation process can:
+
+1. Apply supported Gentoo patches.
+2. Install the kernel sources under `/usr/src`.
+3. Create or update the `/usr/src/linux` symbolic link.
+4. Offer to run `emerge @module-rebuild`.
+
+If you are using an init system other than systemd, set:
+
+```shell
+_gentoo_init="script"
+```
+
+For a minimal or non-systemd kernel configuration, select an appropriate configuration through `_configfile`.
+
+Otherwise, the default Arch Linux configuration may include systemd-related options that are unnecessary for the Gentoo installation.
+
+## Updating an existing installation
+
+You normally do not need to clone the repository again.
+
+Enter the existing repository directory:
+
+```shell
+cd /path/to/linux-tkg
+```
+
+Check for local changes:
+
+```shell
+git status
+```
+
+Pull the latest changes without creating an automatic merge commit:
+
+```shell
+git pull --ff-only
+```
+
+If you keep personal changes directly in `customization.cfg`, review them before pulling repository updates.
+
+For easier updates, store personal configuration in the external configuration file:
+
+```text
+~/.config/frogminer/linux-tkg.cfg
+```
+
+The external configuration file can be selected through `_EXT_CONFIG_PATH`.
+
+This keeps personal build settings separate from tracked files and reduces conflicts when pulling updates.
+
+After updating, rebuild the desired kernel using the installation procedure for your distribution.
+
+For Arch and derivatives:
+
+```shell
+makepkg -si
+```
+
+For supported interactive installation paths:
+
+```shell
+./install.sh install
+```
+
+## Upstream project and credits
+
+This repository is a customized fork of [Frogging-Family/linux-tkg](https://github.com/Frogging-Family/linux-tkg).
+
+The original linux-tkg project, its maintainers, and its contributors provide the underlying build framework, configuration system, patch integration, packaging support, and documentation on which this fork is based.
+
+Related projects and patch sources include:
+
+- [Frogging-Family/linux-tkg](https://github.com/Frogging-Family/linux-tkg)
+- https://github.com/Frogging-Family/wine-tkg-git
+- https://github.com/Frogging-Family/nvidia-all
+- https://github.com/firelzrd/bore-scheduler
+- https://github.com/anthraxx/linux-hardened
+- https://github.com/sched-ext/scx
+- https://gitlab.com/alfredchen/projectc
+- https://github.com/ckolivas/linux
+- https://github.com/graysky2/modprobed-db
+
+Refer to the individual patch files and source repositories for applicable authorship, licensing, attribution, compatibility, and support information.
