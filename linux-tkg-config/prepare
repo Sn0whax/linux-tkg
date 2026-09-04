@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # List of kernels that are maintained upstream
-_current_kernels=("7.2" "7.1" "6.18" "6.12" "6.6" "6.1" "5.15" "5.10")
+_current_kernels=("7.3" "7.2" "7.1" "6.18" "6.12" "6.6" "6.1" "5.15" "5.10")
 
 # List of kernels that are no longer maintained either upstream or locally
 _eol_kernels=("7.0" "6.19" "6.17" "6.16" "6.15" "6.14" "6.13" "6.11" "6.10" "6.9" "6.8" "6.7" "6.5" "6.4" "6.3" "6.2" "6.0" "5.19" "5.18" "5.17" "5.16" "5.14" "5.13" "5.12" "5.11" "5.9" "5.8" "5.7" "5.4")
@@ -169,6 +169,21 @@ _module() {
 
 _vanilla_mode() {
   [[ "$_vanilla" =~ ^(Y|y|Yes|yes|true|1)$ ]];
+}
+
+_replace() {
+  local search="$1"
+  local replace="$2"
+  local file="$3"
+
+  local delim=$'\x01'
+
+  if ! grep -qF -- "$search" "$file"; then
+    error "Pattern '$search' not found in $file"
+    exit 1
+  fi
+
+  sed -i "s${delim}${search}${delim}${replace}${delim}g" "$file"
 }
 
 _prompt_from_array() {
@@ -367,31 +382,27 @@ _set_cpu_scheduler() {
     _recommended_sched="upds"
   fi
 
-  # automatically append "pds" & "bmq" when the patch 0009-prjc.patch exists for the chosen kernel version
   if [[ -f "$_where/linux-tkg-patches/${_basekernel}/0009-prjc.patch" ]]; then
     _avail_cpu_scheds+=("pds" "bmq")
   fi
 
-  # automatically append "bore" when the patch 0002-bore.patch exists for the chosen kernel version
   if [[ -f "$_where/linux-tkg-patches/${_basekernel}/0001-bore.patch" ]]; then
     _avail_cpu_scheds+=("bore")
   fi
 
+  if [[ -f "$_where/linux-tkg-patches/${_basekernel}/0004-muqss.patch" ]]; then
+    _avail_cpu_scheds+=("muqss")
+  fi
+
   # Manual scheduler additions
   if [ "$_kver" = "504" ]; then
-    _avail_cpu_scheds+=("pds" "bmq" "muqss") # PDS is not PrjC in this version, needs to be added manually
-  elif [ "$_kver" = "507" ]; then
-    _avail_cpu_scheds+=("muqss")
+    _avail_cpu_scheds+=("pds" "bmq") # PDS is not PrjC in this version, needs to be added manually
   elif [ "$_kver" = "508" ]; then
     _avail_cpu_scheds+=("upds")
   elif [[ "$_kver" =~ ^(509|511)$ ]]; then
-    _avail_cpu_scheds+=("upds" "muqss")
+    _avail_cpu_scheds+=("upds")
   elif [ "$_kver" = "510" ]; then
-    _avail_cpu_scheds+=("upds" "muqss")
-  elif [ "$_kver" = "512" ]; then
-    _avail_cpu_scheds+=("muqss")
-  elif [ "$_kver" = "513" ]; then
-    _avail_cpu_scheds+=("muqss")
+    _avail_cpu_scheds+=("upds")
   fi
 
   if [[ "${_preempt_rt}" == "1" ]] || _vanilla_mode; then
@@ -873,7 +884,11 @@ _tkg_srcprep() {
   if [ "${_cpusched}" = "muqss" ]; then
     # MuQSS
     _msg="Applying MuQSS base patch"
-    tkgpatch="$srcdir/0004-${_basekernel}-ck1.patch" && _tkg_patcher
+    tkgpatch="$srcdir/0004-muqss.patch" && _tkg_patcher
+
+    # the MuQSS patch appends $(CKVERSION) to EXTRAVERSION, which ends up in the kernel's name
+    # we don't want that, so we remove that
+    sed -i '/^EXTRAVERSION := $(EXTRAVERSION)$(CKVERSION)$/d' Makefile
 
     if [ "${_aggressive_ondemand}" = "true" ]; then
       _msg="Applying MuQSS agressive ondemand governor patch"
@@ -1017,10 +1032,13 @@ _tkg_srcprep() {
   # This leads to all kinds of issues everytime Arch enables it in defconfig. Let's disable it and be happy.
   _disable "SYSFB_SIMPLEFB"
 
-  # buggy project C/PSI interaction workaround
-  if [ "${_cpusched}" = "pds" ] || [ "${_cpusched}" = "bmq" ]; then
+  # buggy project C - MuQSS / PSI interaction workaround
+  if [[ "${_cpusched}" =~ ^(pds|bmq|muqss)$ ]]; then
     _disable "PSI"
     _enable "PSI_DEFAULT_DISABLED"
+  fi
+
+  if [[ "${_cpusched}" =~ ^(pds|bmq)$ ]]; then
     # Disable MLX5_CORE on Prjc
     plain "Disable MLX5_CORE for Prjc"
     _disable "MLX5_CORE"
@@ -1282,11 +1300,11 @@ _tkg_srcprep() {
       _sched="alt_core"
     fi
     if [ "$_sched_yield_type" = "0" ]; then
-      sed -i -e 's/int sched_yield_type __read_mostly = 1;/int sched_yield_type __read_mostly = 0;/' ./kernel/sched/${_sched}.c
+      _replace 'int sched_yield_type __read_mostly = 1;' 'int sched_yield_type __read_mostly = 0;' ./kernel/sched/${_sched}.c
     elif [ "$_sched_yield_type" = "1" ]; then
       msg2 "Using default CPU sched yield type (1)"
     elif [ "$_sched_yield_type" = "2" ]; then
-      sed -i -e 's/int sched_yield_type __read_mostly = 1;/int sched_yield_type __read_mostly = 2;/' ./kernel/sched/${_sched}.c
+      _replace 'int sched_yield_type __read_mostly = 1;' 'int sched_yield_type __read_mostly = 2;' ./kernel/sched/${_sched}.c
     fi
   fi
 
@@ -1327,20 +1345,20 @@ _tkg_srcprep() {
 
     if [ "$_kver" != "504" ]; then
       if [ "${_cpusched}" = "muqss" ]; then
-        sed -i -e "s/int rr_interval __read_mostly = 6;/int rr_interval __read_mostly = ${_rr_interval};/" ./kernel/sched/"${_sched}".c
+        _replace 'int rr_interval __read_mostly = 6;' "int rr_interval __read_mostly = ${_rr_interval};" ./kernel/sched/"${_sched}".c
       elif [ "${_cpusched}" = "upds" ]; then
-        sed -i -e "s/#define SCHED_DEFAULT_RR (4)/#define SCHED_DEFAULT_RR (${_rr_interval})/" ./kernel/sched/pds.c
+        _replace '#define SCHED_DEFAULT_RR (4)' "#define SCHED_DEFAULT_RR (${_rr_interval})" ./kernel/sched/pds.c
       elif [ "${_cpusched}" = "bmq" ] || [ "${_cpusched}" = "pds" ]; then
-        sed -i -e "s/u64 sched_timeslice_ns __read_mostly = (4 * 1000 * 1000);/u64 sched_timeslice_ns __read_mostly = (${_rr_interval} * 1000 * 1000);/" ./kernel/sched/${_sched}.c
+        _replace 'u64 sched_timeslice_ns __read_mostly = (4 * 1000 * 1000);' "u64 sched_timeslice_ns __read_mostly = (${_rr_interval} * 1000 * 1000);" ./kernel/sched/${_sched}.c
       fi
       if [ "${_cpusched}" = "bmq" ]; then
         scripts/config --set-val "SCHED_TIMESLICE" "2"
       fi
     else
       if [ "${_cpusched}" == "muqss" ]; then
-        sed -i -e "s/int rr_interval __read_mostly = 6;/int rr_interval __read_mostly = ${_rr_interval};/" ./kernel/sched/"${_sched}".c
+        _replace 'int rr_interval __read_mostly = 6;' "int rr_interval __read_mostly = ${_rr_interval};" ./kernel/sched/"${_sched}".c
       elif [ "${_cpusched}" == "pds" ]; then
-        sed -i -e "s/#define SCHED_DEFAULT_RR (4)/#define SCHED_DEFAULT_RR (${_rr_interval})/" ./kernel/sched/"${_sched}".c
+        _replace '#define SCHED_DEFAULT_RR (4)' "#define SCHED_DEFAULT_RR (${_rr_interval})" ./kernel/sched/"${_sched}".c
       elif [ "${_cpusched}" == "bmq" ]; then
         scripts/config --set-val "SCHED_TIMESLICE" "${_rr_interval}"
       fi
