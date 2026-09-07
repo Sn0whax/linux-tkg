@@ -19,21 +19,26 @@ jobs:
           - description: BORE patch from upstream
             type: patches-in-git-repo
             repo_link: https://github.com/firelzrd/bore-scheduler.git
-            patch_file_regex: .*/patches/(stable|legacy)/linux-$kver-bore/0001-linux.*.patch
+            # tried in order, the first one that matches wins
+            patch_file_regex:
+              # match @kver@ followed by a '.' or '-' so 6.1 doesn't match 6.12
+              - '.*/patches/testing/0001-linux@kver@[.-].*\.patch'
+              - '.*/patches/stable/linux-@kver@-bore/0001-linux.*\.patch'
+              - '.*/patches/legacy/linux-@kver@-bore/0001-linux.*\.patch'
             copy_as: 0001-bore.patch
           - description: Gentoo Kconfig patch
             type: direct-link
-            src_file_link: https://dev.gentoo.org/~mpagano/genpatches/trunk/$kver/4567_distro-Gentoo-Kconfig.patch
+            src_file_link: https://dev.gentoo.org/~mpagano/genpatches/trunk/@kver@/4567_distro-Gentoo-Kconfig.patch
             copy_as: 0013-gentoo-kconfig.patch
           - description: Gentoo Print loaded firmware patch
             type: direct-link
-            src_file_link: https://dev.gentoo.org/~mpagano/genpatches/trunk/$kver/3000_Support-printing-firmware-info.patch
+            src_file_link: https://dev.gentoo.org/~mpagano/genpatches/trunk/@kver@/3000_Support-printing-firmware-info.patch
             copy_as: 0013-gentoo-print-loaded-firmware.patch
           - description: linux-hardened patches
             type: github-release
             repo: anthraxx/linux-hardened
-            tag_regex: 'v$kver.'
-            asset_name: 'linux-hardened-$tag.patch'
+            tag_regex: 'v@kver@.'
+            asset_name: 'linux-hardened-@tag@.patch'
             copy_as: 0012-linux-hardened.patch
           - description: MuQSS patches
             type: muqss
@@ -56,17 +61,18 @@ jobs:
           do
             [[ ! -d "$kver" ]] && continue
 
-            file_link=$(eval "echo ${{ matrix.src_file_link }}")
+            file_link="${{ matrix.src_file_link }}"
+            file_link="${file_link//@kver@/$kver}"
             echo "Checking link $file_link"
-            if wget $file_link -O $kver/"${{ matrix.copy_as }}".new &> /dev/null
+            if wget "$file_link" -O "$kver/${{ matrix.copy_as }}.new" &> /dev/null
             then
               echo "Link exists"
               echo "Overwriting linux-tkg-patches/$kver/${{ matrix.copy_as }} with remote file"
-              mv -f $kver/"${{ matrix.copy_as }}".new $kver/"${{ matrix.copy_as }}"
-              git add -N $kver/"${{ matrix.copy_as }}"
+              mv -f "$kver/${{ matrix.copy_as }}.new" "$kver/${{ matrix.copy_as }}"
+              git add -N "$kver/${{ matrix.copy_as }}"
             else
               echo "Link doesn't exist"
-              rm $kver/"${{ matrix.copy_as }}".new
+              rm "$kver/${{ matrix.copy_as }}.new"
             fi
           done
 
@@ -86,21 +92,24 @@ jobs:
           do
             [[ ! -d "$kver" ]] && continue
 
-            tag_regex=$(eval "echo ${{ matrix.tag_regex }}")
+            tag_regex="${{ matrix.tag_regex }}"
+            tag_regex="${tag_regex//@kver@/$kver}"
             tag=$(echo "$all_tags" | grep -F "$tag_regex" | head -n1)
-            asset_name=$(eval "echo ${{ matrix.asset_name }}")
+
+            asset_name="${{ matrix.asset_name }}"
+            asset_name="${asset_name//@tag@/$tag}"
 
             file_link="https://github.com/${{ matrix.repo }}/releases/download/$tag/$asset_name"
             echo "Checking link $file_link"
-            if wget $file_link -O $kver/"${{ matrix.copy_as }}".new &> /dev/null
+            if wget "$file_link" -O "$kver/${{ matrix.copy_as }}.new" &> /dev/null
             then
               echo "Link exists"
               echo "Overwriting linux-tkg-patches/$kver/${{ matrix.copy_as }} with remote file"
-              mv -f $kver/"${{ matrix.copy_as }}".new $kver/"${{ matrix.copy_as }}"
-              git add -N $kver/"${{ matrix.copy_as }}"
+              mv -f "$kver/${{ matrix.copy_as }}.new" "$kver/${{ matrix.copy_as }}"
+              git add -N "$kver/${{ matrix.copy_as }}"
             else
               echo "Link doesn't exist"
-              rm $kver/"${{ matrix.copy_as }}".new
+              rm "$kver/${{ matrix.copy_as }}.new"
             fi
           done
 
@@ -109,12 +118,15 @@ jobs:
         id: patches-in-git-repo-sync
         env:
           GH_TOKEN: ${{ github.token }}
+          PATCH_FILE_REGEXES: ${{ toJSON(matrix.patch_file_regex) }}
         run: |
           set -e
 
           _workspace=$(realpath .)
 
           git clone ${{ matrix.repo_link }} --depth=1 remote-patch-repo
+
+          readarray -t regexes < <(jq --raw-output '.[]' <<< "$PATCH_FILE_REGEXES")
 
           cd linux-tkg-patches
 
@@ -124,13 +136,27 @@ jobs:
 
             echo "Looking for patches for $kver"
 
-            patches=($(find "$_workspace"/remote-patch-repo -regextype posix-extended -regex "${{ matrix.patch_file_regex }}" | sort))
+            patch=""
 
-            if [[ "${#patches[@]}" != 0 ]]
+            for regex in "${regexes[@]}"
+            do
+              regex="${regex//@kver@/$kver}"
+
+              readarray -t matches < <(find "$_workspace"/remote-patch-repo -regextype posix-extended -regex "$regex" | sort -V)
+
+              # several versions of the same patch can sit side by side, take the newest
+              if [[ "${#matches[@]}" -ne 0 ]]
+              then
+                patch="${matches[-1]}"
+                break
+              fi
+            done
+
+            if [[ -n "$patch" ]]
             then
-              echo "Found ${patches[-1]}"
-              cp "${patches[-1]}" $kver/${{ matrix.copy_as }}
-              git add -N $kver/${{ matrix.copy_as }}
+              echo "Found $patch"
+              cp "$patch" "$kver/${{ matrix.copy_as }}"
+              git add -N "$kver/${{ matrix.copy_as }}"
             else
               echo "Found none"
             fi
@@ -159,15 +185,15 @@ jobs:
 
             file_link="https://github.com/ckolivas/linux/compare/v$kver...$tag.patch"
             echo "Checking link $file_link"
-            if wget $file_link -O $kver/"${{ matrix.copy_as }}".new &> /dev/null
+            if wget "$file_link" -O "$kver/${{ matrix.copy_as }}.new" &> /dev/null
             then
               echo "Link exists"
               echo "Overwriting linux-tkg-patches/$kver/${{ matrix.copy_as }} with remote file"
-              mv -f $kver/"${{ matrix.copy_as }}".new $kver/"${{ matrix.copy_as }}"
-              git add -N $kver/"${{ matrix.copy_as }}"
+              mv -f "$kver/${{ matrix.copy_as }}.new" "$kver/${{ matrix.copy_as }}"
+              git add -N "$kver/${{ matrix.copy_as }}"
             else
               echo "Link doesn't exist"
-              rm $kver/"${{ matrix.copy_as }}".new
+              rm "$kver/${{ matrix.copy_as }}.new"
             fi
           done
 
