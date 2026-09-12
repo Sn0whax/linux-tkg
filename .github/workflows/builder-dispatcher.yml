@@ -1,4 +1,5 @@
-name: builder dispatcher
+name: Builder Dispatcher
+
 on:
   workflow_call:
     inputs:
@@ -11,19 +12,22 @@ on:
 
 jobs:
   dispatch-to-fedora:
+    name: Fedora
+    if: inputs.os == 'fedora'
     uses: ./.github/workflows/fedora-builder.yml
     with:
       _cpusched: ${{ inputs._cpusched }}
-    if: inputs.os == 'fedora'
 
   dispatch-to-ubuntu:
+    name: Ubuntu
+    if: inputs.os == 'ubuntu'
     uses: ./.github/workflows/ubuntu-builder.yml
     with:
       _cpusched: ${{ inputs._cpusched }}
-    if: inputs.os == 'ubuntu'
 
   dispatch-to-arch:
+    name: Arch
+    if: inputs.os == 'arch'
     uses: ./.github/workflows/arch-builder.yml
     with:
       _cpusched: ${{ inputs._cpusched }}
-    if: inputs.os == 'arch'
