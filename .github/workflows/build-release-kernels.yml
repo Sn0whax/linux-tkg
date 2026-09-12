@@ -100,9 +100,6 @@ jobs:
         _cpusched:
           - eevdf
           - bore
-          - pds
-          - bmq
-          - muqss
 
     uses: ./.github/workflows/builder-dispatcher.yml
 
