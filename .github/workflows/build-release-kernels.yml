@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   kver-checks:
+    name: Check Latest Kernel
     runs-on: ubuntu-latest
 
     outputs:
@@ -67,7 +68,8 @@ jobs:
           echo "latest_kernel=$latest_kernel" >> "$GITHUB_OUTPUT"
           echo "Latest stable kernel: $latest_kernel"
 
-  dispatch-to-arch:
+  build-kernel:
+    name: Build Kernel (${{ matrix._cpusched }})
     needs: [kver-checks]
     if: >-
       needs.kver-checks.outputs.latest_kernel != '' &&
@@ -84,11 +86,12 @@ jobs:
       os: arch
 
   make-release:
+    name: Make Release
     runs-on: ubuntu-latest
     needs:
       - kver-checks
-      - dispatch-to-arch
-    if: needs.dispatch-to-arch.result == 'success'
+      - build-kernel
+    if: needs.build-kernel.result == 'success'
 
     steps:
       - name: Checkout linux-tkg
