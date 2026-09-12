@@ -67,7 +67,7 @@ jobs:
           echo "latest_kernel=$latest_kernel" >> "$GITHUB_OUTPUT"
           echo "Latest stable kernel: $latest_kernel"
 
-  build:
+  dispatch-to-arch:
     needs: [kver-checks]
     if: >-
       needs.kver-checks.outputs.latest_kernel != '' &&
@@ -87,8 +87,8 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - kver-checks
-      - build
-    if: needs.build.result == 'success'
+      - dispatch-to-arch
+    if: needs.dispatch-to-arch.result == 'success'
 
     steps:
       - name: Checkout linux-tkg
